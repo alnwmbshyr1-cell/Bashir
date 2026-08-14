@@ -3,6 +3,10 @@
     "name": "YemenBook - يمن بوك",
     "slug": "yemenbook-social",
     "version": "1.1.0",
+    "extra": {
+      "supabaseUrl": "https://cjwzfrygvoophdezicrz.supabase.co",
+      "supabasePublishableKey": "sb_publishable_gXQeId_p58xGbUCW08BF4Q__5AeIx15"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
