@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../production-readiness.ts", import.meta.url), "utf8");
 const checks = [
-  ['LIVE_OPERATIONS_ENABLED is false', /export const LIVE_OPERATIONS_ENABLED = false;/],
-  ['Yemen payments default to disabled', /countryCode: "YE",[\s\S]*?payments: "disabled"/],
-  ['Yemen payouts default to disabled', /countryCode: "YE",[\s\S]*?payouts: "disabled"/],
-  ['Creator earnings default to disabled', /countryCode: "YE",[\s\S]*?creatorEarnings: "disabled"/],
-  ['Provider live payment guard always returns false', /function canProcessLivePayment\([^)]*\): false \{\s*return false;/],
+  ['LIVE_SOCIAL_ENABLED is false', /export const LIVE_SOCIAL_ENABLED = false;/],
+  ['Community policy has no financial services', /YemenBook is a non-financial community/],
+  ['Messaging readiness gate exists', /id: "messaging"/],
+  ['Media readiness gate exists', /id: "media"/],
+  ['Moderation readiness gate exists', /id: "moderation"/],
 ];
 
 const failed = checks.filter(([, pattern]) => !pattern.test(source));
@@ -15,4 +15,4 @@ if (failed.length > 0) {
   process.exit(1);
 }
 
-console.log(`Production lock verification passed (${checks.length} checks).`);
+console.log(`Community readiness verification passed (${checks.length} checks).`);
