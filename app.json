@@ -5,14 +5,19 @@
     "version": "1.1.0",
     "extra": {
       "supabaseUrl": "https://cjwzfrygvoophdezicrz.supabase.co",
-      "supabasePublishableKey": "sb_publishable_gXQeId_p58xGbUCW08BF4Q__5AeIx15"
+      "supabasePublishableKey": "sb_publishable_gXQeId_p58xGbUCW08BF4Q__5AeIx15",
+      "appMode": "local-social-simulation",
+      "eas": {
+        "projectId": "281e12cf-adf1-4802-b2e9-746441b70985"
+      }
     },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "android": {
-      "package": "com.yemenbook.social",
+      "package": "com.yemenbook.app",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#CE1126"
@@ -31,12 +36,6 @@
         }
       ]
     ],
-    "extra": {
-      "appMode": "local-social-simulation",
-      "eas": {
-        "projectId": "281e12cf-adf1-4802-b2e9-746441b70985"
-      }
-    },
     "owner": "bshyr"
   }
 }
