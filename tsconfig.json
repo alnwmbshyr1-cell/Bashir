@@ -11,5 +11,10 @@
     "resolveJsonModule": true,
     "esModuleInterop": true
   },
-  "include": ["App.tsx", "index.ts", "production-readiness.ts"]
+  "include": [
+    "App.tsx",
+    "index.ts",
+    "production-readiness.ts"
+  ],
+  "extends": "expo/tsconfig.base"
 }
