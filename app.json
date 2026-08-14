@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "YemenBook - يمن بوك",
+    "slug": "yemenbook",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "android": {
+      "package": "com.yemenbook.social",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#CE1126"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png"
+    },
+    "extra": {
+      "appMode": "local-social-simulation",
+      "eas": {
+        "projectId": "281e12cf-adf1-4802-b2e9-746441b70985"
+      }
+    },
+    "owner": "bshyr"
+  }
+}
