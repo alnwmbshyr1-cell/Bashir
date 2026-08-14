@@ -54,13 +54,9 @@ async function currentUserId() {
 }
 
 export async function signUpWithEmail(name: string, phone: string, email: string, password: string) {
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name, phone } } });
   if (error) throw error;
-  if (data.user) {
-    const { error: profileError } = await supabase.from("users").upsert({ id: data.user.id, name, phone }, { onConflict: "id" });
-    if (profileError) throw profileError;
-  }
-  return data.user;
+  return { user: data.user, session: data.session };
 }
 
 export async function signInWithEmail(email: string, password: string) {

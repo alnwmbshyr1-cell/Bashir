@@ -7,7 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
 import { COMMUNITY_POLICY, LIVE_SOCIAL_ENABLED, SOCIAL_SERVICE_GATES } from "./production-readiness";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import { createPost as createCloudPost, fetchFeed, uploadPublicMedia } from "./lib/social";
+import { createPost as createCloudPost, fetchFeed, signInWithEmail, signUpWithEmail, uploadPublicMedia } from "./lib/social";
 import {
   Alert,
   I18nManager,
@@ -77,12 +77,14 @@ export default function App() {
   const [contact, setContact] = useState("demo@yemenbook.local");
   const [draftName, setDraftName] = useState("");
   const [draftContact, setDraftContact] = useState("");
+  const [draftPhone, setDraftPhone] = useState("");
   const [draftPassword, setDraftPassword] = useState("");
   const [notice, setNotice] = useState("");
   const [composer, setComposer] = useState(false);
   const [draftPost, setDraftPost] = useState("");
   const [postMedia, setPostMedia] = useState<{ uri: string; mimeType: string; kind: "image" | "video" } | null>(null);
   const [cloudSessionReady, setCloudSessionReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
   const [posts, setPosts] = useState(feedSeed);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
@@ -134,9 +136,27 @@ export default function App() {
   const show = (message: string) => { setNotice(message); setTimeout(() => setNotice(""), 2600); };
   const go = (next: Screen) => { impact(); setScreen(next); };
 
-  const createProfile = () => {
-    if (!draftName.trim() || !draftContact.trim()) { show(isArabic ? "أدخل الاسم ووسيلة التواصل أولاً" : "Enter a name and contact first"); return; }
-    setDisplayName(draftName.trim()); setContact(draftContact.trim()); setLogged(true); show(t.profileReady);
+  const createProfile = async () => {
+    if (!draftName.trim() || !draftContact.trim() || !draftPhone.trim()) { show(isArabic ? "أدخل الاسم والبريد ورقم الجوال أولاً" : "Enter your name, email, and phone first"); return; }
+    if (!draftContact.includes("@") || draftPassword.length < 6) { show(isArabic ? "استخدم بريداً إلكترونياً وكلمة مرور من 6 أحرف على الأقل" : "Use an email and a password with at least 6 characters"); return; }
+    setAuthBusy(true);
+    try {
+      const result = await signUpWithEmail(draftName.trim(), draftPhone.trim(), draftContact.trim(), draftPassword);
+      if (!result.session) { show(isArabic ? "تحقق من بريدك الإلكتروني ثم سجل الدخول لإكمال الحساب" : "Check your email, then sign in to complete your account"); return; }
+      setDisplayName(draftName.trim()); setContact(draftContact.trim()); setCloudSessionReady(true); setLogged(true); show(isArabic ? "تم إنشاء حساب YemenBook" : "Your YemenBook account is ready");
+    } catch (error) {
+      show(error instanceof Error ? error.message : (isArabic ? "تعذر إنشاء الحساب" : "Could not create the account"));
+    } finally { setAuthBusy(false); }
+  };
+  const signInProfile = async () => {
+    if (!draftContact.includes("@") || !draftPassword) { show(isArabic ? "أدخل البريد الإلكتروني وكلمة المرور" : "Enter your email and password"); return; }
+    setAuthBusy(true);
+    try {
+      const user = await signInWithEmail(draftContact.trim(), draftPassword);
+      setDisplayName(draftName.trim() || user.email?.split("@")[0] || "YemenBook"); setContact(draftContact.trim()); setCloudSessionReady(true); setLogged(true); show(isArabic ? "تم تسجيل الدخول" : "Signed in successfully");
+    } catch (error) {
+      show(error instanceof Error ? error.message : (isArabic ? "تعذر تسجيل الدخول" : "Could not sign in"));
+    } finally { setAuthBusy(false); }
   };
   const pickPostMedia = async (kind: "image" | "video") => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -172,7 +192,7 @@ export default function App() {
   };
   const sendMessage = () => { if (!messageDraft.trim()) return; setMessages([...messages, messageDraft.trim()]); setMessageDraft(""); show(isArabic ? "أُرسلت داخل المحاكاة" : "Sent inside simulation"); };
 
-  if (!logged) return <LoginScreen palette={palette} t={t} isArabic={isArabic} draftName={draftName} setDraftName={setDraftName} draftContact={draftContact} setDraftContact={setDraftContact} draftPassword={draftPassword} setDraftPassword={setDraftPassword} createProfile={createProfile} onSignIn={() => { setLogged(true); show(t.profileReady); }} dark={dark} setDark={setDark} language={language} setLanguage={setLanguage} />;
+  if (!logged) return <LoginScreen palette={palette} t={t} isArabic={isArabic} draftName={draftName} setDraftName={setDraftName} draftContact={draftContact} setDraftContact={setDraftContact} draftPhone={draftPhone} setDraftPhone={setDraftPhone} draftPassword={draftPassword} setDraftPassword={setDraftPassword} createProfile={createProfile} onSignIn={signInProfile} authBusy={authBusy} dark={dark} setDark={setDark} language={language} setLanguage={setLanguage} />;
 
   return (
     <View style={[styles.app, { backgroundColor: palette.bg, direction: isArabic ? "rtl" : "ltr" as any }]}>
@@ -204,12 +224,12 @@ export default function App() {
 }
 
 function LoginScreen(props: any) {
-  const { palette, t, isArabic, draftName, setDraftName, draftContact, setDraftContact, draftPassword, setDraftPassword, createProfile, onSignIn, dark, setDark, language, setLanguage } = props;
+  const { palette, t, isArabic, draftName, setDraftName, draftContact, setDraftContact, draftPhone, setDraftPhone, draftPassword, setDraftPassword, createProfile, onSignIn, dark, setDark, language, setLanguage } = props;
   return <View style={[styles.login, { backgroundColor: palette.bg, direction: isArabic ? "rtl" : "ltr" as any }]}><StatusBar style={dark ? "light" : "dark"} />
     <LinearGradient colors={[YEMEN_RED, "#7B0D1B"]} style={styles.loginHero}><View style={styles.heroMark}><Icon name="account-group" size={46} color="#FFFFFF" /></View><Text style={styles.loginTitle}>YemenBook</Text><Text style={styles.loginArabic}>يمن بوك</Text><Text style={styles.loginSub}>{t.subtitle}</Text></LinearGradient>
     <View style={[styles.loginCard, { backgroundColor: palette.surface }]}>
       <Text style={[styles.heading, { color: palette.text }]}>{t.welcome}</Text><Text style={[styles.body, { color: palette.muted }]}>{t.localNote}</Text>
-      <Field value={draftName} onChangeText={setDraftName} placeholder={t.fullName} palette={palette} /><Field value={draftContact} onChangeText={setDraftContact} placeholder={t.contact} palette={palette} keyboardType="email-address" /><Field value={draftPassword} onChangeText={setDraftPassword} placeholder={t.password} palette={palette} secureTextEntry />
+      <Field value={draftName} onChangeText={setDraftName} placeholder={t.fullName} palette={palette} /><Field value={draftContact} onChangeText={setDraftContact} placeholder={isArabic ? "البريد الإلكتروني" : "Email"} palette={palette} keyboardType="email-address" /><Field value={draftPhone} onChangeText={setDraftPhone} placeholder={isArabic ? "رقم الجوال" : "Phone number"} palette={palette} keyboardType="phone-pad" /><Field value={draftPassword} onChangeText={setDraftPassword} placeholder={t.password} palette={palette} secureTextEntry />
       <Primary label={t.create} onPress={createProfile} /><Pressable style={styles.secondaryButton} onPress={onSignIn}><Text style={[styles.secondaryText, { color: palette.red }]}>{t.signIn}</Text></Pressable>
       <Pressable onPress={() => Alert.alert(t.forgotten, t.reset)}><Text style={[styles.linkText, { color: palette.red }]}>{t.forgotten}</Text></Pressable>
       <LanguageRow language={language} setLanguage={setLanguage} palette={palette} dark={dark} setDark={setDark} t={t} />

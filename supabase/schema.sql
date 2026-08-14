@@ -12,6 +12,21 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.users (id, name, phone, avatar)
+  values (new.id, coalesce(new.raw_user_meta_data->>'name', 'YemenBook Member'), coalesce(new.raw_user_meta_data->>'phone', '000000'), null);
+  return new;
+end;
+$$;
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
+
 create table if not exists public.posts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -197,9 +212,8 @@ $$;
 grant execute on function public.start_direct_conversation(uuid) to authenticated;
 
 -- Public profile names and avatars only. Phone numbers remain private to their owner.
-create or replace view public.public_profiles with (security_invoker = false) as
-  select id, name, avatar, created_at from public.users;
-grant select on public.public_profiles to anon, authenticated;
+revoke execute on function public.start_direct_conversation(uuid) from public, anon;
+grant execute on function public.start_direct_conversation(uuid) to authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values

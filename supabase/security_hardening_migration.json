@@ -1,0 +1,5 @@
+{
+  "project_id": "cjwzfrygvoophdezicrz",
+  "name": "harden_yemenbook_database_access",
+  "query": "drop view if exists public.public_profiles; revoke execute on function public.rls_auto_enable() from public, anon, authenticated; revoke execute on function public.start_direct_conversation(uuid) from public, anon; grant execute on function public.start_direct_conversation(uuid) to authenticated;"
+}
