@@ -1,0 +1,5 @@
+{
+  "project_id": "cjwzfrygvoophdezicrz",
+  "name": "restrict_ad_requests_to_post_owner",
+  "query": "drop policy ads_insert_own on public.ads; create policy ads_insert_own on public.ads for insert to authenticated with check (user_id=auth.uid() and exists (select 1 from public.posts p where p.id=ads.post_id and p.user_id=auth.uid()));"
+}

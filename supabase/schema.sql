@@ -142,7 +142,7 @@ create policy "products author delete" on public.products for delete to authenti
 drop policy if exists "ad owner sees own request" on public.ads;
 create policy "ad owner sees own request" on public.ads for select to authenticated using (user_id = auth.uid() or status = 'approved');
 drop policy if exists "ad owner creates own request" on public.ads;
-create policy "ad owner creates own request" on public.ads for insert to authenticated with check (user_id = auth.uid());
+create policy "ad owner creates own request" on public.ads for insert to authenticated with check (user_id = auth.uid() and exists (select 1 from public.posts p where p.id = ads.post_id and p.user_id = auth.uid()));
 
 drop policy if exists "comments public read" on public.comments;
 create policy "comments public read" on public.comments for select using (true);
