@@ -1,0 +1,5 @@
+{
+  "project_id": "cjwzfrygvoophdezicrz",
+  "name": "add_safe_authenticated_profile_directory",
+  "query": "create or replace function public.profile_directory() returns table(id uuid,name text,avatar text) language sql security definer stable set search_path=public as $$ select u.id,u.name,u.avatar from public.users u order by u.created_at desc limit 100 $$; revoke execute on function public.profile_directory() from public, anon; grant execute on function public.profile_directory() to authenticated;"
+}

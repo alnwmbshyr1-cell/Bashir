@@ -7,10 +7,11 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
 import { COMMUNITY_POLICY, LIVE_SOCIAL_ENABLED, SOCIAL_SERVICE_GATES } from "./production-readiness";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import { addComment, createPost as createCloudPost, fetchFeed, signInWithEmail, signUpWithEmail, togglePostReaction, uploadPublicMedia } from "./lib/social";
+import { addComment, createMarketplaceProduct, createPost as createCloudPost, fetchFeed, fetchMarketplaceProducts, fetchMessages, fetchProfileDirectory, sendMessage as sendCloudMessage, signInWithEmail, signUpWithEmail, startDirectConversation, subscribeToConversation, togglePostReaction, uploadPublicMedia, type DirectMessage, type DirectoryProfile } from "./lib/social";
 import {
   Alert,
   I18nManager,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -96,8 +97,19 @@ export default function App() {
   const [apiMode, setApiMode] = useState(false);
   const [city, setCity] = useState("الكل");
   const [marketCategory, setMarketCategory] = useState("الكل");
+  const [marketProducts, setMarketProducts] = useState<any[]>(marketplaceItems.map((item, index) => ({ ...item, id: `demo-product-${index}` })));
+  const [listingOpen, setListingOpen] = useState(false);
+  const [listingTitle, setListingTitle] = useState("");
+  const [listingPrice, setListingPrice] = useState("");
+  const [listingWhatsapp, setListingWhatsapp] = useState("");
+  const [listingMedia, setListingMedia] = useState<{ uri: string; mimeType: string } | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [messages, setMessages] = useState<string[]>(["مرحباً! هذه محادثة محلية توضيحية."]);
+  const [chatProfiles, setChatProfiles] = useState<DirectoryProfile[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeRecipient, setActiveRecipient] = useState<DirectoryProfile | null>(null);
+  const [messageRecords, setMessageRecords] = useState<DirectMessage[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const isArabic = language === "ar" || language === "ur";
   const t = copy[language === "ar" ? "ar" : "en"];
@@ -121,18 +133,28 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data }) => {
       setCloudSessionReady(Boolean(data.session));
       if (!data.session) return;
+      setCurrentUserId(data.session.user.id);
       try {
         const cloudPosts = await fetchFeed();
         if (cloudPosts.length) setPosts(cloudPosts.map((post) => ({ ...post, author: "YemenBook", badge: isArabic ? "منشور المجتمع" : "Community post", tag: isArabic ? "منشور" : "Post", hue: ["#CE1126", "#111827"] as [string, string], comments: 0 })) as any);
+        const [directory, products] = await Promise.all([fetchProfileDirectory(), fetchMarketplaceProducts()]);
+        setChatProfiles(directory.filter((profile) => profile.id !== data.session?.user.id));
+        if (products.length) setMarketProducts(products.map((product) => ({ ...product, price: `${product.price}`, city: isArabic ? "اليمن" : "Yemen", category: isArabic ? "إعلان المجتمع" : "Community listing", icon: "storefront-outline" })));
       } catch { /* preserve local feed while the service is being configured */ }
     });
   }, [isArabic]);
 
   useEffect(() => {
+    if (!activeConversationId || !cloudSessionReady) return;
+    const channel = subscribeToConversation(activeConversationId, (message) => setMessageRecords((previous) => previous.some((entry) => entry.id === message.id) ? previous : [...previous, message]));
+    return () => { supabase.removeChannel(channel); };
+  }, [activeConversationId, cloudSessionReady]);
+
+  useEffect(() => {
     AsyncStorage.setItem("yemenbook-state", JSON.stringify({ logged, displayName, contact, dark, language, twoFactor, notifications })).catch(() => undefined);
   }, [logged, displayName, contact, dark, language, twoFactor, notifications]);
 
-  const filteredItems = useMemo(() => marketplaceItems.filter((item) => (city === "الكل" || item.city === city) && (marketCategory === "الكل" || item.category === marketCategory)), [city, marketCategory]);
+  const filteredItems = useMemo(() => marketProducts.filter((item) => (city === "الكل" || item.city === city) && (marketCategory === "الكل" || item.category === marketCategory)), [city, marketCategory, marketProducts]);
   const impact = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   const show = (message: string) => { setNotice(message); setTimeout(() => setNotice(""), 2600); };
   const go = (next: Screen) => { impact(); setScreen(next); };
@@ -208,7 +230,44 @@ export default function App() {
       show(isArabic ? "تم نشر تعليقك" : "Your comment was posted");
     } catch (error) { show(error instanceof Error ? error.message : (isArabic ? "تعذر نشر التعليق" : "Could not post comment")); }
   };
-  const sendMessage = () => { if (!messageDraft.trim()) return; setMessages([...messages, messageDraft.trim()]); setMessageDraft(""); show(isArabic ? "أُرسلت داخل المحاكاة" : "Sent inside simulation"); };
+  const pickListingMedia = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) { show(isArabic ? "يجب السماح بالوصول إلى الصور أولاً" : "Allow photo access first"); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsEditing: true });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0]; setListingMedia({ uri: asset.uri, mimeType: asset.mimeType || "image/jpeg" });
+  };
+  const publishListing = async () => {
+    if (!listingTitle.trim() || !listingPrice.trim() || !listingWhatsapp.trim()) { show(isArabic ? "أدخل العنوان والسعر وواتساب" : "Enter title, price, and WhatsApp"); return; }
+    try {
+      if (!cloudSessionReady) { show(isArabic ? "سجّل دخولك أولاً لنشر إعلانك" : "Sign in first to publish your listing"); return; }
+      const imageUrl = listingMedia ? await uploadPublicMedia("product-media", listingMedia.uri, listingMedia.mimeType) : null;
+      const product = await createMarketplaceProduct({ title: listingTitle, price: Number(listingPrice), whatsapp: listingWhatsapp, imageUrl });
+      setMarketProducts([{ ...product, price: `${product.price}`, city: isArabic ? "اليمن" : "Yemen", category: isArabic ? "إعلان جديد" : "New listing", icon: "storefront-outline" }, ...marketProducts]);
+      setListingTitle(""); setListingPrice(""); setListingWhatsapp(""); setListingMedia(null); setListingOpen(false); show(isArabic ? "تم نشر إعلانك المجاني" : "Your free listing was published");
+    } catch (error) { show(error instanceof Error ? error.message : (isArabic ? "تعذر نشر الإعلان" : "Could not publish listing")); }
+  };
+  const openConversation = async (profile: DirectoryProfile) => {
+    if (!cloudSessionReady) { show(isArabic ? "سجّل دخولك لبدء محادثة" : "Sign in to start a conversation"); return; }
+    try {
+      const conversationId = await startDirectConversation(profile.id);
+      const loaded = await fetchMessages(conversationId);
+      setActiveConversationId(conversationId); setActiveRecipient(profile); setMessageRecords(loaded);
+    } catch (error) { show(error instanceof Error ? error.message : (isArabic ? "تعذر فتح المحادثة" : "Could not open the conversation")); }
+  };
+  const sendMessage = async () => {
+    const body = messageDraft.trim(); if (!body) return;
+    try {
+      if (cloudSessionReady && activeConversationId) {
+        const message = await sendCloudMessage(activeConversationId, body);
+        setMessageRecords((previous) => previous.some((entry) => entry.id === message.id) ? previous : [...previous, message]);
+        show(isArabic ? "تم إرسال الرسالة" : "Message sent");
+      } else {
+        setMessages([...messages, body]); show(isArabic ? "أُرسلت محلياً حتى تختار عضواً" : "Sent locally until you choose a member");
+      }
+      setMessageDraft("");
+    } catch (error) { show(error instanceof Error ? error.message : (isArabic ? "تعذر إرسال الرسالة" : "Could not send message")); }
+  };
 
   if (!logged) return <LoginScreen palette={palette} t={t} isArabic={isArabic} draftName={draftName} setDraftName={setDraftName} draftContact={draftContact} setDraftContact={setDraftContact} draftPhone={draftPhone} setDraftPhone={setDraftPhone} draftPassword={draftPassword} setDraftPassword={setDraftPassword} createProfile={createProfile} onSignIn={signInProfile} authBusy={authBusy} dark={dark} setDark={setDark} language={language} setLanguage={setLanguage} />;
 
@@ -222,9 +281,9 @@ export default function App() {
         {screen === "home" && <HomeScreen {...{ palette, t, isArabic, displayName, composer, setComposer, draftPost, setDraftPost, createPost, pickPostMedia, postMedia, posts, liked, reactToPost, commentDrafts, setCommentDrafts, publishComment, saved, setSaved, show, go }} />}
         {screen === "explore" && <ExploreScreen {...{ palette, t, isArabic, friends, setFriends, show, go }} />}
         {screen === "video" && <VideoScreen {...{ palette, t, isArabic, show }} />}
-        {screen === "market" && <MarketScreen {...{ palette, t, isArabic, city, setCity, marketCategory, setMarketCategory, filteredItems, show, go }} />}
+        {screen === "market" && <MarketScreen {...{ palette, t, isArabic, city, setCity, marketCategory, setMarketCategory, filteredItems, listingOpen, setListingOpen, listingTitle, setListingTitle, listingPrice, setListingPrice, listingWhatsapp, setListingWhatsapp, listingMedia, pickListingMedia, publishListing, show, go }} />}
         {screen === "menu" && <MenuScreen {...{ palette, t, isArabic, go, displayName }} />}
-        {screen === "messenger" && <MessengerScreen {...{ palette, t, isArabic, messages, messageDraft, setMessageDraft, sendMessage, show }} />}
+        {screen === "messenger" && <MessengerScreen {...{ palette, t, isArabic, messages, messageRecords, currentUserId, chatProfiles, activeRecipient, openConversation, messageDraft, setMessageDraft, sendMessage, show }} />}
         {screen === "groups" && <GroupsScreen {...{ palette, t, isArabic, joined, setJoined, show }} />}
         {screen === "pages" && <PagesScreen {...{ palette, t, isArabic, show }} />}
         {screen === "events" && <EventsScreen {...{ palette, t, isArabic, show }} />}
@@ -276,11 +335,11 @@ function ExploreScreen({ palette, t, isArabic, friends, setFriends, show, go }: 
 
 function VideoScreen({ palette, t, isArabic, show }: any) { return <><SectionTitle title="Reels" palette={palette} action={isArabic ? "المشاهدة" : "Watch"} />{["حكاية من صنعاء", "رحلة إلى إب", "يوم مع صانع محتوى"].map((title, index) => <Card key={title} palette={palette}><LinearGradient colors={index === 1 ? ["#16803C", "#0F5132"] : ["#CE1126", "#321018"]} style={styles.reel}><View style={styles.playCircle}><Icon name="play" size={34} color="#FFFFFF" /></View><View><Text style={styles.reelTitle}>{title}</Text><Text style={styles.reelMeta}>{index === 2 ? t.live : "Reel · 00:32"} · {isArabic ? "وسائط محاكية" : "Simulated media"}</Text></View></LinearGradient><View style={styles.postActions}><Action icon="heart-outline" label="2.4K" palette={palette} onPress={() => show(t.actionSaved)} /><Action icon="comment-outline" label={t.comment} palette={palette} onPress={() => show(t.noReal)} /><Action icon="music-note" label={isArabic ? "موسيقى" : "Music"} palette={palette} onPress={() => show(t.noReal)} /></View></Card>)}</>; }
 
-function MarketScreen({ palette, t, isArabic, city, setCity, marketCategory, setMarketCategory, filteredItems, show, go }: any) { return <><Card palette={palette}><Text style={[styles.heading, { color: palette.text }]}>{isArabic ? "سوق يمن بوك" : "YemenBook Marketplace"}</Text><Text style={[styles.body, { color: palette.muted }]}>{isArabic ? "إعلانات مجانية للتواصل المباشر بين البائع والمشتري. أي اتفاق أو تسليم يتم خارج التطبيق." : "Free listings for direct contact between seller and buyer. Any agreement or delivery happens outside the app."}</Text><FilterChips values={["الكل", "صنعاء", "عدن", "تعز", "إب"]} selected={city} setSelected={setCity} palette={palette} /><FilterChips values={["الكل", "إلكترونيات", "سيارات", "عقارات", "أثاث"]} selected={marketCategory} setSelected={setMarketCategory} palette={palette} /><Primary label={isArabic ? "نشر إعلان مجاني" : "Create a free listing"} onPress={() => show(t.noReal)} /></Card>{filteredItems.map((item: any) => <Card key={item.title} palette={palette}><View style={styles.marketRow}><View style={[styles.marketIcon, { backgroundColor: palette.input }]}><Icon name={item.icon} size={30} color={palette.red} /></View><View style={styles.grow}><Text style={[styles.strong, { color: palette.text }]}>{item.title}</Text><Text style={[styles.price, { color: palette.red }]}>{item.price}</Text><Text style={[styles.small, { color: palette.muted }]}>{item.city} · {item.category}</Text></View></View><View style={styles.inlineButtons}><Ghost label={t.message} palette={palette} onPress={() => go("messenger")} /><Primary compact label={isArabic ? "تواصل مع البائع" : "Contact seller"} onPress={() => { go("messenger"); show(isArabic ? "افتح المحادثة للتواصل مباشرة مع البائع" : "Open the chat to contact the seller directly"); }} /></View></Card>)}</>; }
+function MarketScreen({ palette, t, isArabic, city, setCity, marketCategory, setMarketCategory, filteredItems, listingOpen, setListingOpen, listingTitle, setListingTitle, listingPrice, setListingPrice, listingWhatsapp, setListingWhatsapp, listingMedia, pickListingMedia, publishListing, show, go }: any) { const openWhatsapp = (number?: string) => { const digits = String(number || "").replace(/\D/g, ""); if (!digits) { show(isArabic ? "أضف رقم واتساب صالحاً للتواصل" : "A valid WhatsApp number is required"); return; } Linking.openURL(`https://wa.me/${digits}`).catch(() => show(isArabic ? "تعذر فتح واتساب" : "Could not open WhatsApp")); }; return <><Card palette={palette}><Text style={[styles.heading, { color: palette.text }]}>{isArabic ? "سوق يمن بوك" : "YemenBook Marketplace"}</Text><Text style={[styles.body, { color: palette.muted }]}>{isArabic ? "إعلانات مجانية للتواصل المباشر بين البائع والمشتري. أي اتفاق أو تسليم يتم خارج التطبيق." : "Free listings for direct contact between seller and buyer. Any agreement or delivery happens outside the app."}</Text><FilterChips values={["الكل", "صنعاء", "عدن", "تعز", "إب"]} selected={city} setSelected={setCity} palette={palette} /><FilterChips values={["الكل", "إلكترونيات", "سيارات", "عقارات", "أثاث"]} selected={marketCategory} setSelected={setMarketCategory} palette={palette} /><Primary label={listingOpen ? (isArabic ? "إغلاق النموذج" : "Close form") : (isArabic ? "نشر إعلان مجاني" : "Create a free listing")} onPress={() => setListingOpen(!listingOpen)} />{listingOpen ? <View style={styles.composerExpanded}><Field value={listingTitle} onChangeText={setListingTitle} placeholder={isArabic ? "عنوان المنتج" : "Product title"} palette={palette} /><Field value={listingPrice} onChangeText={setListingPrice} placeholder={isArabic ? "السعر" : "Price"} palette={palette} keyboardType="decimal-pad" /><Field value={listingWhatsapp} onChangeText={setListingWhatsapp} placeholder={isArabic ? "رقم واتساب للتواصل" : "WhatsApp contact number"} palette={palette} keyboardType="phone-pad" /><Ghost label={listingMedia ? (isArabic ? "تم اختيار صورة" : "Image selected") : (isArabic ? "اختيار صورة المنتج" : "Select product image")} palette={palette} onPress={pickListingMedia} /><Primary label={isArabic ? "نشر الإعلان المجاني" : "Publish free listing"} onPress={publishListing} /></View> : null}</Card>{filteredItems.map((item: any) => <Card key={item.id || item.title} palette={palette}><View style={styles.marketRow}><View style={[styles.marketIcon, { backgroundColor: palette.input }]}><Icon name={item.icon || "storefront-outline"} size={30} color={palette.red} /></View><View style={styles.grow}><Text style={[styles.strong, { color: palette.text }]}>{item.title}</Text><Text style={[styles.price, { color: palette.red }]}>{item.price}</Text><Text style={[styles.small, { color: palette.muted }]}>{item.city} · {item.category}</Text></View></View><View style={styles.inlineButtons}><Ghost label={t.message} palette={palette} onPress={() => go("messenger")} /><Primary compact label={isArabic ? "واتساب البائع" : "WhatsApp seller"} onPress={() => openWhatsapp(item.whatsapp)} /></View></Card>)}</>; }
 
 function MenuScreen({ palette, t, isArabic, go, displayName }: any) { const menu = [["account-group-outline", t.groups, "groups"], ["facebook-messenger", t.messenger, "messenger"], ["flag-variant-outline", t.pages, "pages"], ["calendar-star", t.events, "events"], ["briefcase-outline", t.jobs, "jobs"], ["gamepad-variant-outline", t.games, "games"], ["account-circle-outline", t.profile, "profile"], ["shield-account-outline", t.security, "security"], ["view-dashboard-outline", t.admin, "admin"], ["cog-outline", t.settings, "settings"]] as const; return <><Card palette={palette}><View style={styles.personRow}><Avatar name={displayName} /><View><Text style={[styles.strong, { color: palette.text }]}>{displayName}</Text><Text style={[styles.small, { color: palette.muted }]}>{isArabic ? "عرض الملف المحلي" : "View local profile"}</Text></View></View></Card><Card palette={palette}>{menu.map(([icon, label, key]) => <Pressable key={key} style={[styles.menuRow, { borderBottomColor: palette.border }]} onPress={() => go(key as Screen)}><View style={[styles.menuIcon, { backgroundColor: palette.input }]}><Icon name={icon as any} color={palette.red} /></View><Text style={[styles.menuText, { color: palette.text }]}>{label}</Text><Icon name={isArabic ? "chevron-left" : "chevron-right"} color={palette.muted} /></Pressable>)}</Card></>; }
 
-function MessengerScreen({ palette, t, isArabic, messages, messageDraft, setMessageDraft, sendMessage, show }: any) { return <><Card palette={palette}><View style={styles.personRow}><Avatar name="ليان" /><View style={styles.grow}><Text style={[styles.strong, { color: palette.text }]}>ليان عبدالله</Text><Text style={[styles.small, { color: palette.green }]}>{isArabic ? "نشطة الآن · محاكاة" : "Active now · simulation"}</Text></View><Pressable style={[styles.iconButton, { backgroundColor: palette.input }]} onPress={() => show(t.noReal)}><Icon name="phone-outline" color={palette.text} /></Pressable><Pressable style={[styles.iconButton, { backgroundColor: palette.input }]} onPress={() => show(t.noReal)}><Icon name="video-outline" color={palette.text} /></Pressable></View></Card><Card palette={palette}>{messages.map((msg: string, index: number) => <View key={`${msg}-${index}`} style={[styles.messageBubble, { alignSelf: index % 2 ? "flex-end" : "flex-start", backgroundColor: index % 2 ? palette.red : palette.input }]}><Text style={{ color: index % 2 ? "#FFFFFF" : palette.text }}>{msg}</Text></View>)}<View style={styles.quickReplies}>{["تم", "شكراً", "سأتواصل لاحقاً"].map((quick) => <Pressable key={quick} style={[styles.chip, { backgroundColor: palette.input }]} onPress={() => { setMessageDraft(quick); }}><Text style={{ color: palette.text }}>{quick}</Text></Pressable>)}</View><View style={styles.messageComposer}><Pressable onPress={() => show(t.noReal)}><Icon name="paperclip" color={palette.muted} /></Pressable><TextInput value={messageDraft} onChangeText={setMessageDraft} placeholder={isArabic ? "اكتب رسالة محلية" : "Write a local message"} placeholderTextColor={palette.muted} style={[styles.messageInput, { color: palette.text }]} /><Pressable onPress={sendMessage}><Icon name="send" color={palette.red} /></Pressable></View></Card><Card palette={palette}><Text style={[styles.small, { color: palette.muted }]}>{isArabic ? "الرسائل الصوتية والصور والفيديو والملفات والمكالمات ظواهر واجهة محاكاة فقط." : "Voice notes, media, files and calls are interface-only simulations."}</Text></Card></>; }
+function MessengerScreen({ palette, t, isArabic, messages, messageRecords, currentUserId, chatProfiles, activeRecipient, openConversation, messageDraft, setMessageDraft, sendMessage, show }: any) { const liveMessages = messageRecords.length ? messageRecords : messages.map((body: string, index: number) => ({ id: `local-${index}`, body, sender_id: index % 2 ? currentUserId : "sample" })); return <><Card palette={palette}><Text style={[styles.strong, { color: palette.text }]}>{isArabic ? "ابدأ محادثة" : "Start a conversation"}</Text>{chatProfiles.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storyRow}>{chatProfiles.map((profile: DirectoryProfile) => <Pressable key={profile.id} style={styles.story} onPress={() => openConversation(profile)}><View style={[styles.storyImage, { backgroundColor: profile.id === activeRecipient?.id ? palette.red : palette.input }]}><View style={styles.storyAvatar}><Text style={styles.avatarText}>{profile.name.slice(0, 1)}</Text></View><Text style={[styles.storyName, { color: profile.id === activeRecipient?.id ? "#FFFFFF" : palette.text }]}>{profile.name}</Text></View></Pressable>)}</ScrollView> : <Text style={[styles.small, { color: palette.muted }]}>{isArabic ? "سيظهر هنا أعضاء YemenBook الآخرون عند التسجيل." : "Other YemenBook members will appear here after they register."}</Text>}</Card><Card palette={palette}><View style={styles.personRow}><Avatar name={activeRecipient?.name || "YemenBook"} /><View style={styles.grow}><Text style={[styles.strong, { color: palette.text }]}>{activeRecipient?.name || (isArabic ? "اختر عضواً لبدء محادثة" : "Choose a member to start chatting")}</Text><Text style={[styles.small, { color: palette.green }]}>{activeRecipient ? (isArabic ? "محادثة مباشرة" : "Direct conversation") : (isArabic ? "رسائل محلية مؤقتة" : "Temporary local messages")}</Text></View><Pressable style={[styles.iconButton, { backgroundColor: palette.input }]} onPress={() => show(isArabic ? "المكالمات ليست ضمن هذه النسخة" : "Calls are not included in this build")}><Icon name="phone-outline" color={palette.text} /></Pressable></View></Card><Card palette={palette}>{liveMessages.map((msg: DirectMessage, index: number) => { const mine = Boolean(currentUserId && msg.sender_id === currentUserId) || (!currentUserId && index % 2); return <View key={msg.id} style={[styles.messageBubble, { alignSelf: mine ? "flex-end" : "flex-start", backgroundColor: mine ? palette.red : palette.input }]}><Text style={{ color: mine ? "#FFFFFF" : palette.text }}>{msg.body}</Text></View>; })}<View style={styles.quickReplies}>{["تم", "شكراً", "سأتواصل لاحقاً"].map((quick) => <Pressable key={quick} style={[styles.chip, { backgroundColor: palette.input }]} onPress={() => { setMessageDraft(quick); }}><Text style={{ color: palette.text }}>{quick}</Text></Pressable>)}</View><View style={styles.messageComposer}><Pressable onPress={() => show(isArabic ? "إرسال الملفات سيكون في تحديث لاحق" : "File sending will arrive in a later update")}><Icon name="paperclip" color={palette.muted} /></Pressable><TextInput value={messageDraft} onChangeText={setMessageDraft} placeholder={activeRecipient ? (isArabic ? "اكتب رسالة" : "Write a message") : (isArabic ? "اختر عضواً أولاً" : "Choose a member first")} placeholderTextColor={palette.muted} style={[styles.messageInput, { color: palette.text }]} /><Pressable onPress={sendMessage}><Icon name="send" color={palette.red} /></Pressable></View></Card></>; }
 
 function GroupsScreen({ palette, t, isArabic, joined, setJoined, show }: any) { return <><Card palette={palette}><Primary label={isArabic ? "إنشاء مجموعة محاكاة" : "Create simulated group"} onPress={() => show(t.noReal)} /></Card>{groupSeed.map((group) => <Card key={group.name} palette={palette}><View style={styles.groupRow}><View style={[styles.groupAvatar, { backgroundColor: group.color }]}><Icon name="account-group" size={28} color="#FFFFFF" /></View><View style={styles.grow}><Text style={[styles.strong, { color: palette.text }]}>{group.name}</Text><Text style={[styles.small, { color: palette.muted }]}>{group.kind === "عام" ? t.public : t.private} · {group.members} {isArabic ? "عضو" : "members"}</Text><Text style={[styles.small, { color: palette.muted }]}>{isArabic ? "منشورات · أحداث · ملفات · قوانين" : "Posts · events · files · rules"}</Text></View></View><View style={styles.inlineButtons}><Ghost label={t.manage} palette={palette} onPress={() => show(t.noReal)} /><Primary compact label={joined[group.name] ? t.joined : t.join} onPress={() => { setJoined({ ...joined, [group.name]: !joined[group.name] }); show(t.actionSaved); }} /></View></Card>)}</>; }
 

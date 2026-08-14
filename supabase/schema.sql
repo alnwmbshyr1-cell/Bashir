@@ -215,6 +215,18 @@ grant execute on function public.start_direct_conversation(uuid) to authenticate
 revoke execute on function public.start_direct_conversation(uuid) from public, anon;
 grant execute on function public.start_direct_conversation(uuid) to authenticated;
 
+create or replace function public.profile_directory()
+returns table(id uuid, name text, avatar text)
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select u.id, u.name, u.avatar from public.users u order by u.created_at desc limit 100;
+$$;
+revoke execute on function public.profile_directory() from public, anon;
+grant execute on function public.profile_directory() to authenticated;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
   ('post-media', 'post-media', true, 15728640, array['image/jpeg', 'image/png', 'image/webp', 'video/mp4']),

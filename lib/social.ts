@@ -45,6 +45,8 @@ export type DirectMessage = {
   created_at: string;
 };
 
+export type DirectoryProfile = Pick<SocialProfile, "id" | "name" | "avatar">;
+
 const sanitizeFileName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-100) || "file";
 
 async function currentUserId() {
@@ -157,6 +159,12 @@ export async function createMarketplaceProduct(input: { title: string; price: nu
     .single();
   if (error) throw error;
   return data as MarketplaceProduct;
+}
+
+export async function fetchProfileDirectory() {
+  const { data, error } = await supabase.rpc("profile_directory");
+  if (error) throw error;
+  return (data ?? []) as DirectoryProfile[];
 }
 
 export async function startDirectConversation(otherUserId: string) {
