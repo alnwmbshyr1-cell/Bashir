@@ -1,0 +1,31 @@
+YemenBook 1.1.0 — Release Notes
+================================
+
+Application name: YemenBook
+Package name: com.yemenbook.app
+Version name: 1.1.0
+Version code: 2
+
+Description
+-----------
+YemenBook is a Yemeni social and community platform with public posts, media,
+comments, reactions, direct messaging, and a free C2C marketplace. Marketplace
+listings connect buyers and sellers directly; YemenBook does not collect a
+commission or process an in-app payment.
+
+Included public files
+---------------------
+- YemenBook-1.1.0-com.yemenbook.app-release.apk
+- SHA256SUMS.txt
+- ReleaseNotes.txt
+
+Verification
+------------
+The APK is signed and aligned. Verify the APK download against SHA256SUMS.txt
+before installation or upload.
+
+Signing key
+-----------
+The signing certificate is stored locally only and is deliberately excluded
+from this GitHub release branch. Keep its private backup secure for future
+updates to the same Android package.
